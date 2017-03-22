@@ -165,8 +165,8 @@ int main(int argc, char **argv)
                 }
                 else if (strncmp(buf, "USER cs317", 10) == 0)
                 {
-                    // if (send(new_fd, "331 Please specify the password.\n", 34, 0) == -1)
-                    // 	perror("send");
+                    if (send(new_fd, "230 Login successful.\n", 23, 0) == -1)
+                        perror("send");
                     while (1)
                     {
                         if ((numbytes = recv(new_fd, buf, MAXDATASIZE - 1, 0)) == -1)
@@ -176,11 +176,29 @@ int main(int argc, char **argv)
                         }
                         else
                         {
-
-                            if (strncmp(buf, "QUIT", 4) == 0)
+                            if (strncmp(buf, "CWD", 3) == 0)
                             {
-                                printf("next connection\n");
-                                exit(1);
+                            }
+                            if (strncmp(buf, "CDUP", 4) == 0)
+                            {
+                            }
+                            if (strncmp(buf, "TYPE", 4) == 0)
+                            {
+                            }
+                            if (strncmp(buf, "MODE", 4) == 0)
+                            {
+                            }
+                            if (strncmp(buf, "STRU", 4) == 0)
+                            {
+                            }
+                            if (strncmp(buf, "RETR", 4) == 0)
+                            {
+                            }
+                            if (strncmp(buf, "PASV", 4) == 0)
+                            {
+                            }
+                            if (strncmp(buf, "NLST", 4) == 0)
+                            {
                             }
                         }
                     }
