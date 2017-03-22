@@ -14,6 +14,7 @@
 #include <signal.h>
 #include "dir.h"
 #include "usage.h"
+#include <ctype.h>
 
 #define PORT "3492"
 #define BACKLOG 10
@@ -65,7 +66,7 @@ int main(int argc, char **argv) {
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE; // use my IP
 
-    if ((rv = getaddrinfo(NULL, PORT, &hints, &servinfo)) != 0) {
+    if ((rv = getaddrinfo(NULL, argv[1], &hints, &servinfo)) != 0) {
         fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
         return 1;
     }
@@ -132,18 +133,39 @@ int main(int argc, char **argv) {
         if (!fork()) { // this is the child process
             close(sockfd); // child doesn't need the listener
             //Loop here until QUIT
-            if (send(new_fd, "Client Connected!", 17, 0) == -1)
-                perror("send");
-            if ((numbytes = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1) {
-                perror("recv");
-                exit(1);
+            if (send(new_fd, "220, Service ready for new user.\n", 34, 0) == -1)
+				perror("send");
+            while(1){
+
+                if ((numbytes = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1) {
+                    perror("recv");
+                    exit(1);
+                }
+                buf[numbytes] = '\0';
+                printf("server: received %s",buf);
+                if (strncmp(buf,"QUIT",4) == 0){
+                    printf("next connection\n");
+                    break;
+                } else if (strncmp(buf, "USER", 4) == 0) {
+                	if (send(new_fd, "331 Please specify the password.\n", 34, 0) == -1)
+						perror("send");
+					if ((numbytes = recv(new_fd, buf, MAXDATASIZE-1, 0)) == -1) {
+                    	perror("recv");
+                    	exit(1);
+                	}
+                	while(1) {}
+                } else {
+                	if (send(new_fd, "530 Please login with USER and PASS\n", 37, 0) == -1)
+						perror("send");
+                }
+                 
             }
-            buf[numbytes] = '\0';
-            printf("server: received '%s'\n",buf);
-            close(new_fd);
+            close(new_fd); 
             exit(0);
         }
-        close(new_fd);  // parent doesn't need this
+        close(new_fd);
+        
+          // parent doesn't need this
     }
 
     return 0;
