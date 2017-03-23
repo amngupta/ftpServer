@@ -76,6 +76,12 @@ int main(int argc, char **argv)
     char s[INET6_ADDRSTRLEN];
     int rv;
 
+    void sendResponse(char *status)
+    {
+        if (send(new_fd, status, strlen(status), 0) == -1)
+            perror("send");
+    }
+
     memset(&hints, 0, sizeof hints);
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -157,8 +163,7 @@ int main(int argc, char **argv)
         {                  // this is the child process
             close(sockfd); // child doesn't need the listener
             //Loop here until QUIT
-            if (send(new_fd, "220, Service ready for new user.\n", 34, 0) == -1)
-                perror("send");
+            sendResponse("220, Service ready for new user.\n");
             while (1)
             {
 
@@ -176,8 +181,7 @@ int main(int argc, char **argv)
                 }
                 else if (strncmp(buf, "USER cs317", 10) == 0)
                 {
-                    if (send(new_fd, "230 Login successful.\n", 23, 0) == -1)
-                        perror("send");
+                    sendResponse("230 Login successful.\n");
                     while (1)
                     {
                         Command *cmd = malloc(sizeof(Command));
@@ -192,30 +196,50 @@ int main(int argc, char **argv)
                             buf[numbytes] = '\0';
                             printf("server: received %s", buf);
                             parse_command(buf, cmd);
+                            if (strncmp(cmd->command, "SYST", 4) == 0)
+                            {
+                                sendResponse("215 UNIX \n");
+                            }
                             if (strncmp(cmd->command, "CWD", 3) == 0)
                             {
                                 if (chdir(cmd->arg) == 0)
                                 {
-                                    printf("250 Directory successfully changed.\n");
+                                    sendResponse("250 Directory successfully changed.\n");
+                                    // if (send(new_fd, "250 Directory successfully changed.\n", 37, 0) == -1)
+                                    //     perror("send");
                                 }
                                 else
                                 {
-                                    printf("550 Failed to change directory.\n");
+                                    sendResponse("550 Failed to change directory.\n");
                                 }
                             }
                             if (strncmp(cmd->command, "CDUP", 4) == 0)
                             {
-                                char *cwd;
-                                char buff[256 + 1];
-                                cwd = getcwd(buff, 256 + 1);
-                                if (cwd != NULL)
+                                if (chdir("..") == 0)
                                 {
-                                    printf("My working directory is %s.\n", cwd);
+                                    sendResponse("250 Directory successfully changed.\n");
+                                }
+                                else
+                                {
+                                    sendResponse("550 Failed to change directory.\n");
                                 }
                             }
                             if (strncmp(cmd->command, "TYPE", 4) == 0)
                             {
-                                                        }
+                                if (cmd->arg[0] == 'I')
+                                {
+                                    sendResponse("200 Switching to Binary mode.\n");
+                                }
+                                else if (cmd->arg[0] == 'A')
+                                {
+                                    /* Type A must be always accepted according to RFC */
+                                    sendResponse("200 Switching to ASCII mode.\n");
+                                }
+                                else
+                                {
+                                    sendResponse("504 Command not implemented for that parameter.\n");
+                                }
+                            }
                             if (strncmp(cmd->command, "MODE", 4) == 0)
                             {
                             }
@@ -241,8 +265,7 @@ int main(int argc, char **argv)
                 }
                 else
                 {
-                    if (send(new_fd, "530 Please login with USER\n", 37, 0) == -1)
-                        perror("send");
+                    sendResponse("530 Please login with USER\n");
                 }
             }
             close(new_fd);
