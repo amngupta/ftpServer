@@ -176,11 +176,27 @@ int main(int argc, char **argv)
                         }
                         else
                         {
+
+                            buf[numbytes] = '\0';
+                            printf("server: received %s", buf);
                             if (strncmp(buf, "CWD", 3) == 0)
                             {
+                                printf("Here \n");
+                                char *path = (char *)malloc(strlen(buf));
+                                ;
+                                strcpy(path, &buf[4]);
+                                printf("moving to directory: %s", path);
+                                chdir(path);
                             }
                             if (strncmp(buf, "CDUP", 4) == 0)
                             {
+                                char *cwd;
+                                char buff[256 + 1];
+                                cwd = getcwd(buff, 256 + 1);
+                                if (cwd != NULL)
+                                {
+                                    printf("My working directory is %s.\n", cwd);
+                                }
                             }
                             if (strncmp(buf, "TYPE", 4) == 0)
                             {
@@ -199,6 +215,11 @@ int main(int argc, char **argv)
                             }
                             if (strncmp(buf, "NLST", 4) == 0)
                             {
+                            }
+                            if (strncmp(buf, "QUIT", 4) == 0)
+                            {
+                                printf("next connection\n");
+                                exit(0);
                             }
                         }
                     }
