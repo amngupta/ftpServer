@@ -66,6 +66,8 @@ int main(int argc, char **argv)
     // This is the main program for the thread version of nc
 
     int numbytes;
+    char cwd[1024];
+   
     char buf[MAXDATASIZE];
     int sockfd, new_fd; // listen on sock_fd, new connection on new_fd
     struct addrinfo hints, *servinfo, *p;
@@ -173,6 +175,7 @@ int main(int argc, char **argv)
                     exit(1);
                 }
                 buf[numbytes] = '\0';
+
                 printf("server: received %s", buf);
                 if (strncmp(buf, "QUIT", 4) == 0)
                 {
@@ -199,6 +202,14 @@ int main(int argc, char **argv)
                             if (strncmp(cmd->command, "SYST", 4) == 0)
                             {
                                 sendResponse("215 UNIX \n");
+                            }
+                            if (strncmp(cmd->command, "FEAT", 4) == 0)
+                            {
+                                sendResponse("211\n");
+                            }
+                            if (strncmp(cmd->command, "PWD", 3) == 0)
+                            {
+                                sendResponse("212\n");
                             }
                             if (strncmp(cmd->command, "CWD", 3) == 0)
                             {
@@ -242,6 +253,23 @@ int main(int argc, char **argv)
                             }
                             if (strncmp(cmd->command, "MODE", 4) == 0)
                             {
+                                if (cmd->arg[0] == 'C') 
+                                {
+                                    sendResponse("220 Mode set to C\n");
+                                }
+                                else if (cmd->arg[0] == 'B')
+                                {
+                                    sendResponse("220 Mode set to B\n");
+                                }
+                                else if (cmd->arg[0] == 'S')
+                                {
+                                    sendResponse("220 Mode set to S\n");
+                                }
+                                else 
+                                {
+                                   sendResponse("504 Bad MODE command\n"); 
+                                }
+                                
                             }
                             if (strncmp(cmd->command, "STRU", 4) == 0)
                             {
@@ -254,12 +282,20 @@ int main(int argc, char **argv)
                             }
                             if (strncmp(cmd->command, "NLST", 4) == 0)
                             {
+                                if (getcwd(cwd, sizeof(cwd)) != NULL)
+                                {
+                                    listFiles(new_fd, cwd);
+                                }
+                                else
+                                {
+                                    perror("getcwd() error");
+                                }
                             }
                             if (strncmp(cmd->command, "QUIT", 4) == 0)
                             {
                                 printf("next connection\n");
                                 exit(0);
-                            }
+                            }     
                         }
                     }
                 }
