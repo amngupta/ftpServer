@@ -21,6 +21,12 @@
 
 #define MAXDATASIZE 100
 
+typedef struct Command
+{
+    char command[5];
+    char arg[128];
+} Command;
+
 void sigchld_handler(int s)
 {
     // waitpid() might overwrite errno, so we save and restore it:
@@ -40,6 +46,11 @@ void *get_in_addr(struct sockaddr *sa)
     }
 
     return &(((struct sockaddr_in6 *)sa)->sin6_addr);
+}
+
+void parse_command(char *cmdstring, Command *cmd)
+{
+    sscanf(cmdstring, "%s %s", cmd->command, cmd->arg);
 }
 
 int main(int argc, char **argv)
@@ -169,6 +180,7 @@ int main(int argc, char **argv)
                         perror("send");
                     while (1)
                     {
+                        Command *cmd = malloc(sizeof(Command));
                         if ((numbytes = recv(new_fd, buf, MAXDATASIZE - 1, 0)) == -1)
                         {
                             perror("recv");
@@ -179,16 +191,19 @@ int main(int argc, char **argv)
 
                             buf[numbytes] = '\0';
                             printf("server: received %s", buf);
-                            if (strncmp(buf, "CWD", 3) == 0)
+                            parse_command(buf, cmd);
+                            if (strncmp(cmd->command, "CWD", 3) == 0)
                             {
-                                printf("Here \n");
-                                char *path = (char *)malloc(strlen(buf));
-                                ;
-                                strcpy(path, &buf[4]);
-                                printf("moving to directory: %s", path);
-                                chdir(path);
+                                if (chdir(cmd->arg) == 0)
+                                {
+                                    printf("250 Directory successfully changed.\n");
+                                }
+                                else
+                                {
+                                    printf("550 Failed to change directory.\n");
+                                }
                             }
-                            if (strncmp(buf, "CDUP", 4) == 0)
+                            if (strncmp(cmd->command, "CDUP", 4) == 0)
                             {
                                 char *cwd;
                                 char buff[256 + 1];
@@ -198,25 +213,25 @@ int main(int argc, char **argv)
                                     printf("My working directory is %s.\n", cwd);
                                 }
                             }
-                            if (strncmp(buf, "TYPE", 4) == 0)
+                            if (strncmp(cmd->command, "TYPE", 4) == 0)
+                            {
+                                                        }
+                            if (strncmp(cmd->command, "MODE", 4) == 0)
                             {
                             }
-                            if (strncmp(buf, "MODE", 4) == 0)
+                            if (strncmp(cmd->command, "STRU", 4) == 0)
                             {
                             }
-                            if (strncmp(buf, "STRU", 4) == 0)
+                            if (strncmp(cmd->command, "RETR", 4) == 0)
                             {
                             }
-                            if (strncmp(buf, "RETR", 4) == 0)
+                            if (strncmp(cmd->command, "PASV", 4) == 0)
                             {
                             }
-                            if (strncmp(buf, "PASV", 4) == 0)
+                            if (strncmp(cmd->command, "NLST", 4) == 0)
                             {
                             }
-                            if (strncmp(buf, "NLST", 4) == 0)
-                            {
-                            }
-                            if (strncmp(buf, "QUIT", 4) == 0)
+                            if (strncmp(cmd->command, "QUIT", 4) == 0)
                             {
                                 printf("next connection\n");
                                 exit(0);
@@ -240,6 +255,7 @@ int main(int argc, char **argv)
 
     return 0;
 }
+
 // Check the command line arguments
 
 // This is how to call the function in dir.c to get a listing of a directory.
