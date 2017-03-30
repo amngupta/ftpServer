@@ -7,25 +7,34 @@
 #include <string.h>
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <netinet/in.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <sys/wait.h>
+#include <fcntl.h>
 #include <signal.h>
 #include "dir.h"
 #include "usage.h"
 #include <ctype.h>
+#include <time.h>
 
 #define PORT "3492"
 #define BACKLOG 10
-
 #define MAXDATASIZE 100
+#define BUF_SIZE 8192
 
 typedef struct Command
 {
     char command[5];
     char arg[128];
 } Command;
+
+typedef struct Port
+{
+    int p1;
+    int p2;
+} Port;
 
 void sigchld_handler(int s)
 {
@@ -38,6 +47,54 @@ void sigchld_handler(int s)
     errno = saved_errno;
 }
 
+ssize_t sendfile(int out_fd, int in_fd, off_t * offset, size_t count ){
+    off_t orig;
+    char buf[BUF_SIZE];
+    size_t toRead, numRead, numSent, totSent;
+
+    if (offset != NULL) {
+        /* Save current file offset and set offset to value in '*offset' */
+        orig = lseek(in_fd, 0, SEEK_CUR);
+        if (orig == -1)
+            return -1;
+        if (lseek(in_fd, *offset, SEEK_SET) == -1)
+            return -1;
+    }
+
+    totSent = 0;
+    while (count > 0) {
+        toRead = count<BUF_SIZE ? count : BUF_SIZE;
+
+        numRead = read(in_fd, buf, toRead);
+        if (numRead == -1)
+            return -1;
+        if (numRead == 0)
+            break;                      /* EOF */
+
+        numSent = write(out_fd, buf, numRead);
+        if (numSent == -1)
+            return -1;
+        if (numSent == 0) {               /* Should never happen */
+            perror("sendfile: write() transferred 0 bytes");
+            exit(-1);
+        }
+
+        count -= numSent;
+        totSent += numSent;
+    }
+
+    if (offset != NULL) {
+        /* Return updated file offset in '*offset', and reset the file offset
+           to the value it had when we were called. */
+        *offset = lseek(in_fd, 0, SEEK_CUR);
+        if (*offset == -1)
+            return -1;
+        if (lseek(in_fd, orig, SEEK_SET) == -1)
+            return -1;
+    }
+    return totSent;
+}
+
 void *get_in_addr(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET)
@@ -48,9 +105,57 @@ void *get_in_addr(struct sockaddr *sa)
     return &(((struct sockaddr_in6 *)sa)->sin6_addr);
 }
 
+void gen_port(Port *port)
+{
+    srand(time(NULL));
+    port->p1 = 128 + (rand() % 64);
+    port->p2 = rand() % 0xff;
+}
+
+void getip(int sock, int *ip)
+{
+    socklen_t addr_size = sizeof(struct sockaddr_in);
+    struct sockaddr_in addr;
+    getsockname(sock, (struct sockaddr *)&addr, &addr_size);
+
+    char *host = inet_ntoa(addr.sin_addr);
+    sscanf(host, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
+}
+
 void parse_command(char *cmdstring, Command *cmd)
 {
     sscanf(cmdstring, "%s %s", cmd->command, cmd->arg);
+}
+
+int create_socket(int port)
+{
+    int sock;
+    int reuse = 1;
+
+    /* Server addess */
+    struct sockaddr_in server_address = (struct sockaddr_in){
+        AF_INET,
+        htons(port),
+        (struct in_addr){INADDR_ANY}};
+
+    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) < 0)
+    {
+        fprintf(stderr, "Cannot open socket");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Address can be reused instantly after program exits */
+    setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof reuse);
+
+    /* Bind socket to server address */
+    if (bind(sock, (struct sockaddr *)&server_address, sizeof(server_address)) < 0)
+    {
+        fprintf(stderr, "Cannot bind socket to address");
+        exit(EXIT_FAILURE);
+    }
+
+    listen(sock, 5);
+    return sock;
 }
 
 int main(int argc, char **argv)
@@ -67,11 +172,13 @@ int main(int argc, char **argv)
 
     int numbytes;
     char cwd[1024];
-   
+
     char buf[MAXDATASIZE];
-    int sockfd, new_fd; // listen on sock_fd, new connection on new_fd
+    int sockfd, new_fd, pasv_fd; // listen on sock_fd, new connection on new_fd
+    int passive = 0;
     struct addrinfo hints, *servinfo, *p;
-    struct sockaddr_storage their_addr; // connector's address information
+    struct sockaddr_storage their_addr;      // connector's address information
+    struct sockaddr_storage their_pasv_addr; // connector's address information
     socklen_t sin_size;
     struct sigaction sa;
     int yes = 1;
@@ -253,7 +360,7 @@ int main(int argc, char **argv)
                             }
                             if (strncmp(cmd->command, "MODE", 4) == 0)
                             {
-                                if (cmd->arg[0] == 'C') 
+                                if (cmd->arg[0] == 'C')
                                 {
                                     sendResponse("220 Mode set to C\n");
                                 }
@@ -265,37 +372,106 @@ int main(int argc, char **argv)
                                 {
                                     sendResponse("220 Mode set to S\n");
                                 }
-                                else 
+                                else
                                 {
-                                   sendResponse("504 Bad MODE command\n"); 
+                                    sendResponse("504 Bad MODE command\n");
                                 }
-                                
                             }
                             if (strncmp(cmd->command, "STRU", 4) == 0)
                             {
                             }
                             if (strncmp(cmd->command, "RETR", 4) == 0)
                             {
+                                int connection;
+                                int fd;
+                                struct stat stat_buf;
+                                off_t offset = 0;
+                                int sent_total = 0;
+                                if (passive)
+                                {
+                                    if (access(cmd->arg, R_OK) == 0 && (fd = open(cmd->arg, O_RDONLY)))
+                                    {
+                                        fstat(fd, &stat_buf);
+
+                                        sendResponse("150 Opening BINARY mode data connection.\n");
+
+                                        // connection = accept_connection(pasv_fd);
+                                        // close(state->sock_pasv);
+                                        if (sent_total = sendfile(pasv_fd, fd, &offset, stat_buf.st_size))
+                                        {
+
+                                            if (sent_total != stat_buf.st_size)
+                                            {
+                                                perror("ftp_retr:sendfile");
+                                                exit(EXIT_SUCCESS);
+                                            }
+
+                                            sendResponse("226 File send OK.\n");
+                                        }
+                                        else
+                                        {
+                                            sendResponse("550 Failed to read file.\n");
+                                        }
+                                    }
+                                //     else
+                                //     {
+                                //         state->message = "550 Failed to get file\n";
+                                //     }
+                                }
+                                // else
+                                // {
+                                //     state->message = "550 Please use PASV instead of PORT.\n";
+                                // }
                             }
                             if (strncmp(cmd->command, "PASV", 4) == 0)
                             {
+                                int ip[4];
+                                char buff[255];
+                                char *response = "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\n";
+                                Port *port = malloc(sizeof(Port));
+                                gen_port(port);
+                                getip(sockfd, ip);
+                                int sock_pasv = create_socket((256 * port->p1) + port->p2);
+                                printf("port: %d\n", 256 * port->p1 + port->p2);
+                                //TODO SEND IP and PORT TO CLIENT
+                                sendResponse("port: ");
+                                pasv_fd = accept(sock_pasv, (struct sockaddr *)&their_pasv_addr, &sin_size);
+                                if (pasv_fd == -1)
+                                {
+                                    perror("accept");
+                                    continue;
+                                }
+                                else
+                                {
+                                    passive = 1;
+                                }
+                                sprintf(buff, response, ip[0], ip[1], ip[2], ip[3], port->p1, port->p2);
                             }
                             if (strncmp(cmd->command, "NLST", 4) == 0)
                             {
                                 if (getcwd(cwd, sizeof(cwd)) != NULL)
                                 {
-                                    listFiles(new_fd, cwd);
+                                    if (passive)
+                                    {
+                                        listFiles(pasv_fd, cwd);
+                                        close(pasv_fd);
+                                    }
+                                    else
+                                    {
+                                        sendResponse("425 Use PORT or PASV first\n");
+                                    }
                                 }
                                 else
                                 {
                                     perror("getcwd() error");
                                 }
+                            
                             }
                             if (strncmp(cmd->command, "QUIT", 4) == 0)
                             {
                                 printf("next connection\n");
                                 exit(0);
-                            }     
+                            }
                         }
                     }
                 }
