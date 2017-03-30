@@ -36,6 +36,12 @@ typedef struct Port
     int p2;
 } Port;
 
+// Trevor:
+// TO UPPER AND PARENT DIRECTORY SECURITY
+// AMAN: 
+// Code Clean Up
+
+
 void sigchld_handler(int s)
 {
     // waitpid() might overwrite errno, so we save and restore it:
@@ -413,15 +419,17 @@ int main(int argc, char **argv)
                                             sendResponse("550 Failed to read file.\n");
                                         }
                                     }
-                                //     else
-                                //     {
-                                //         state->message = "550 Failed to get file\n";
-                                //     }
+                                    else
+                                    {
+                                        sendResponse("550 Failed to get file\n");
+                                    }
+                                    passive = 0;
+                                    close(pasv_fd);
                                 }
-                                // else
-                                // {
-                                //     state->message = "550 Please use PASV instead of PORT.\n";
-                                // }
+                                else
+                                {
+                                    sendResponse("550 Please use PASV instead of PORT.\n");
+                                }
                             }
                             if (strncmp(cmd->command, "PASV", 4) == 0)
                             {
@@ -454,6 +462,7 @@ int main(int argc, char **argv)
                                     if (passive)
                                     {
                                         listFiles(pasv_fd, cwd);
+                                        passive = 0;
                                         close(pasv_fd);
                                     }
                                     else
