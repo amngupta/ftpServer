@@ -1,46 +1,76 @@
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <sys/wait.h>
-#include <fcntl.h>
-#include <signal.h>
-#include "dir.h"
-#include "usage.h"
-#include <ctype.h>
-#include <time.h>
-
-#define PORT "3492"
-#define BACKLOG 10
-#define MAXDATASIZE 100
-#define BUF_SIZE 8192
-
-typedef struct Command
-{
-    char command[5];
-    char arg[128];
-} Command;
-
-typedef struct Port
-{
-    int p1;
-    int p2;
-} Port;
+#include "common.h"
 
 // Trevor:
 // TO UPPER AND PARENT DIRECTORY SECURITY
-// AMAN: 
+// AMAN:
 // Code Clean Up
 
+ssize_t sendBinaryFile(int out_fd, int in_fd, off_t *offset, size_t count)
+{
+    off_t orig;
+    char buf[BUF_SIZE];
+    size_t toRead, numRead, numSent, totSent;
+
+    if (offset != NULL)
+    {
+        orig = lseek(in_fd, 0, SEEK_CUR);
+        if (orig == -1)
+            return -1;
+        if (lseek(in_fd, *offset, SEEK_SET) == -1)
+            return -1;
+    }
+
+    totSent = 0;
+    while (count > 0)
+    {
+        toRead = count < BUF_SIZE ? count : BUF_SIZE;
+
+        numRead = read(in_fd, buf, toRead);
+        if (numRead == -1)
+            return -1;
+        if (numRead == 0)
+            break; /* EOF */
+
+        numSent = write(out_fd, buf, numRead);
+        if (numSent == -1)
+            return -1;
+        if (numSent == 0)
+        {
+            perror("sendfile: write() transferred 0 bytes");
+            exit(-1);
+        }
+
+        count -= numSent;
+        totSent += numSent;
+    }
+
+    if (offset != NULL)
+    {
+        *offset = lseek(in_fd, 0, SEEK_CUR);
+        if (*offset == -1)
+            return -1;
+        if (lseek(in_fd, orig, SEEK_SET) == -1)
+            return -1;
+    }
+    return totSent;
+}
+
+void generatePort(Port *port)
+{
+    srand(time(NULL));
+    port->p1 = 128 + (rand() % 64);
+    port->p2 = rand() % 0xff;
+}
+
+void getIPAddr(int sock, int *ip)
+{
+    socklen_t addr_size = sizeof(struct sockaddr_in);
+    struct sockaddr_in addr;
+    getsockname(sock, (struct sockaddr *)&addr, &addr_size);
+
+    char *host = inet_ntoa(addr.sin_addr);
+    sscanf(host, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
+}
 
 void sigchld_handler(int s)
 {
@@ -53,54 +83,6 @@ void sigchld_handler(int s)
     errno = saved_errno;
 }
 
-ssize_t sendfile(int out_fd, int in_fd, off_t * offset, size_t count ){
-    off_t orig;
-    char buf[BUF_SIZE];
-    size_t toRead, numRead, numSent, totSent;
-
-    if (offset != NULL) {
-        /* Save current file offset and set offset to value in '*offset' */
-        orig = lseek(in_fd, 0, SEEK_CUR);
-        if (orig == -1)
-            return -1;
-        if (lseek(in_fd, *offset, SEEK_SET) == -1)
-            return -1;
-    }
-
-    totSent = 0;
-    while (count > 0) {
-        toRead = count<BUF_SIZE ? count : BUF_SIZE;
-
-        numRead = read(in_fd, buf, toRead);
-        if (numRead == -1)
-            return -1;
-        if (numRead == 0)
-            break;                      /* EOF */
-
-        numSent = write(out_fd, buf, numRead);
-        if (numSent == -1)
-            return -1;
-        if (numSent == 0) {               /* Should never happen */
-            perror("sendfile: write() transferred 0 bytes");
-            exit(-1);
-        }
-
-        count -= numSent;
-        totSent += numSent;
-    }
-
-    if (offset != NULL) {
-        /* Return updated file offset in '*offset', and reset the file offset
-           to the value it had when we were called. */
-        *offset = lseek(in_fd, 0, SEEK_CUR);
-        if (*offset == -1)
-            return -1;
-        if (lseek(in_fd, orig, SEEK_SET) == -1)
-            return -1;
-    }
-    return totSent;
-}
-
 void *get_in_addr(struct sockaddr *sa)
 {
     if (sa->sa_family == AF_INET)
@@ -109,23 +91,6 @@ void *get_in_addr(struct sockaddr *sa)
     }
 
     return &(((struct sockaddr_in6 *)sa)->sin6_addr);
-}
-
-void gen_port(Port *port)
-{
-    srand(time(NULL));
-    port->p1 = 128 + (rand() % 64);
-    port->p2 = rand() % 0xff;
-}
-
-void getip(int sock, int *ip)
-{
-    socklen_t addr_size = sizeof(struct sockaddr_in);
-    struct sockaddr_in addr;
-    getsockname(sock, (struct sockaddr *)&addr, &addr_size);
-
-    char *host = inet_ntoa(addr.sin_addr);
-    sscanf(host, "%d.%d.%d.%d", &ip[0], &ip[1], &ip[2], &ip[3]);
 }
 
 void parse_command(char *cmdstring, Command *cmd)
@@ -172,9 +137,6 @@ int main(int argc, char **argv)
         usage(argv[0]);
         return -1;
     }
-
-    // This is some sample code feel free to delete it
-    // This is the main program for the thread version of nc
 
     int numbytes;
     char cwd[1024];
@@ -403,12 +365,12 @@ int main(int argc, char **argv)
 
                                         // connection = accept_connection(pasv_fd);
                                         // close(state->sock_pasv);
-                                        if (sent_total = sendfile(pasv_fd, fd, &offset, stat_buf.st_size))
+                                        if (sent_total = sendBinaryFile(pasv_fd, fd, &offset, stat_buf.st_size))
                                         {
 
                                             if (sent_total != stat_buf.st_size)
                                             {
-                                                perror("ftp_retr:sendfile");
+                                                perror("ftp_retr:sendBinaryFile");
                                                 exit(EXIT_SUCCESS);
                                             }
 
@@ -437,8 +399,8 @@ int main(int argc, char **argv)
                                 char buff[255];
                                 char *response = "227 Entering Passive Mode (%d,%d,%d,%d,%d,%d)\n";
                                 Port *port = malloc(sizeof(Port));
-                                gen_port(port);
-                                getip(sockfd, ip);
+                                generatePort(port);
+                                getIPAddr(sockfd, ip);
                                 int sock_pasv = create_socket((256 * port->p1) + port->p2);
                                 printf("port: %d\n", 256 * port->p1 + port->p2);
                                 //TODO SEND IP and PORT TO CLIENT
@@ -457,13 +419,16 @@ int main(int argc, char **argv)
                             }
                             if (strncmp(cmd->command, "NLST", 4) == 0)
                             {
+                                sendResponse("150 Here comes the directory listing.\n");
                                 if (getcwd(cwd, sizeof(cwd)) != NULL)
                                 {
                                     if (passive)
                                     {
+
                                         listFiles(pasv_fd, cwd);
                                         passive = 0;
                                         close(pasv_fd);
+                                        sendResponse("226 Directory send OK.\n");
                                     }
                                     else
                                     {
@@ -474,7 +439,6 @@ int main(int argc, char **argv)
                                 {
                                     perror("getcwd() error");
                                 }
-                            
                             }
                             if (strncmp(cmd->command, "QUIT", 4) == 0)
                             {
